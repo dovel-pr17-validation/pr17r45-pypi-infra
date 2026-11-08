@@ -1,0 +1,285 @@
+#!/bin/bash
+
+set -exuo pipefail
+
+INSTALL_TYPE=${1:-non-ci}
+
+# Disable automatic updates etc
+systemctl stop apt-daily{,-upgrade}.{service,timer} unattended-upgrades.service
+systemctl disable apt-daily{,-upgrade}.{service,timer} unattended-upgrades.service
+
+# Disable installing recommended packages by default
+echo 'APT::Install-Recommends "false";' > /etc/apt/apt.conf.d/99-no-install-recommends
+
+# apt demotes a failed index fetch to a warning, so an install then resolves
+# against whatever pockets did come down. Retry, and stop on a partial index.
+echo 'Acquire::Retries "5";' > /etc/apt/apt.conf.d/99-retries
+
+# The regional ec2 ports mirrors front an often-empty backend pool, and arm64
+# has no second tier to fall back on.
+if [ "$(dpkg --print-architecture)" = arm64 ]; then
+  for sources in /etc/apt/sources.list /etc/apt/sources.list.d/ubuntu.sources; do
+    if [ -f "${sources}" ]; then
+      sed -i -E 's|https?://[a-z0-9.-]+\.ec2\.ports\.ubuntu\.com/|http://ports.ubuntu.com/|g' "${sources}"
+    fi
+  done
+fi
+
+# Disable unattended upgrades
+apt purge -y --auto-remove unattended-upgrades
+
+apt-get -y -o APT::Update::Error-Mode=any update
+apt-get -y dist-upgrade --force-yes
+
+apt-get -y install \
+  autofs \
+  gpg-agent \
+  jq \
+  locales \
+  libc6-arm64-cross \
+  libdatetime-perl \
+  libtinfo\* \
+  libwww-perl \
+  nfs-common \
+  python-is-python3 \
+  python3-pip \
+  python3-venv \
+  qemu-user-static \
+  rsyslog \
+  ssmtp \
+  unzip \
+  wget
+
+locale-gen en_US.UTF-8
+
+# Install user-requested locales
+cat >> /etc/locale.gen << EOF
+cs_CZ.UTF-8 UTF-8
+cs_CZ ISO-8859-2
+en_GB ISO-8859-1
+de_DE.UTF-8 UTF-8
+en_GB.UTF-8 UTF-8
+en_US.UTF-8 UTF-8
+en_US ISO-8859-1
+en_US.ISO-8859-15 ISO-8859-15
+is_IS.UTF-8 UTF-8
+ja_JP.UTF-8 UTF-8
+ja_JP.EUC-JP EUC-JP
+ja_JP.SHIFT_JIS SHIFT_JIS
+lt_LT.UTF-8 UTF-8
+lt_LT ISO-8859-13
+ru_RU.UTF-8 UTF-8
+sv_SE.UTF-8 UTF-8
+th_TH.UTF-8 UTF-8
+th_TH TIS-620
+zh_CN.UTF-8 UTF-8
+zh_CN.GB18030 GB18030
+zh_CN.GBK GBK
+zh_CN GB2312
+zh_HK.UTF-8 UTF-8
+zh_HK BIG5-HKSCS
+zh_TW.UTF-8 UTF-8
+zh_TW.EUC-TW EUC-TW
+zh_TW BIG5
+EOF
+locale-gen
+
+apt-get autoremove --purge -y
+
+# This returns amd64 or arm64
+ARCH=$(dpkg --print-architecture)
+
+if [ "$INSTALL_TYPE" != 'ci' ]; then
+  mkdir /tmp/aws-install
+  pushd /tmp/aws-install
+  if [ "$ARCH" == 'amd64' ]; then
+    curl -sL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+  else
+    curl -sL "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o "awscliv2.zip"
+  fi
+  unzip awscliv2.zip
+  ./aws/install
+  popd
+  rm -rf /tmp/aws-install
+fi
+
+mkdir -p /root/.aws /home/ubuntu/.aws
+echo -e "[default]\nregion=us-east-1" | tee /root/.aws/config /home/ubuntu/.aws/config
+chown -R ubuntu /home/ubuntu/.aws
+
+# GHC (8.6.1 and others) and some other legacy toolchains link against
+# libtinfo.so.5, which Ubuntu 24.04 no longer packages. Pull our mirror of the
+# jammy package and install it next to the v6 that ships by default. amd64 only
+# for now; revisit arm64 if a compiler there ends up needing it.
+if [ "$ARCH" == 'amd64' ]; then
+  mkdir -p /tmp/libtinfo5
+  pushd /tmp/libtinfo5
+  aws s3 cp s3://compiler-explorer/dependencies/libtinfo5_6.3-2ubuntu0.1_amd64.deb libtinfo5.deb
+  dpkg-deb -x libtinfo5.deb extracted
+  cp -a extracted/lib/x86_64-linux-gnu/libtinfo.so.5* /usr/lib/x86_64-linux-gnu/
+  ldconfig
+  popd
+  rm -rf /tmp/libtinfo5
+fi
+
+# Qt's Conan packages are built against ICU 70. ICU version-suffixes every
+# exported symbol and bumps its soname each release, so the 74 that 24.04 ships
+# cannot satisfy their libicu*.so.70 needs -- there is no symbol overlap at all.
+# The two are co-installable by design, so put our mirror of the jammy package
+# next to the default one on both architectures.
+if [ "$ARCH" == 'amd64' ]; then
+  ICU_TRIPLET=x86_64-linux-gnu
+else
+  ICU_TRIPLET=aarch64-linux-gnu
+fi
+mkdir -p /tmp/libicu70
+pushd /tmp/libicu70
+aws s3 cp "s3://compiler-explorer/dependencies/libicu70_70.1-2_${ARCH}.deb" libicu70.deb
+dpkg-deb -x libicu70.deb extracted
+cp -a "extracted/usr/lib/${ICU_TRIPLET}"/libicu*.so.70* "/usr/lib/${ICU_TRIPLET}/"
+ldconfig
+popd
+rm -rf /tmp/libicu70
+
+get_conf() {
+  aws ssm get-parameter --name "$1" | jq -r .Parameter.Value
+}
+
+# Allow override of SSM parameter paths for log destination
+LOG_DEST_HOST_PARAM="${LOG_DEST_HOST_PARAM:-/compiler-explorer/logDestHost}"
+LOG_DEST_PORT_PARAM="${LOG_DEST_PORT_PARAM:-/compiler-explorer/logDestPort}"
+
+LOG_DEST_HOST=$(get_conf "${LOG_DEST_HOST_PARAM}")
+LOG_DEST_PORT=$(get_conf "${LOG_DEST_PORT_PARAM}")
+PTRAIL='/etc/rsyslog.d/99-papertrail.conf'
+cat >"${PTRAIL}" <<RSYSLOG_EOF
+# Don't forward rsyslog's own local-write-failure messages. With a full disk,
+# every failed write to /var/log/* generates more of them (including for the
+# failures they themselves cause), flooding the remote destination at hundreds
+# of thousands of messages per minute and exhausting the log quota.
+# See https://github.com/compiler-explorer/compiler-explorer/issues/8811
+if \$programname == 'rsyslogd' and (\$msg contains 'write error' or \$msg contains 'message lost' or \$msg contains 'messages lost') then stop
+*.*          @${LOG_DEST_HOST}:${LOG_DEST_PORT}
+RSYSLOG_EOF
+service rsyslog restart
+pushd /tmp
+
+if [ "$ARCH" == 'amd64' ]; then
+  curl -sL 'https://github.com/papertrail/remote_syslog2/releases/download/v0.21/remote_syslog_linux_amd64.tar.gz' | tar zxf -
+else
+  curl -sL 'https://github.com/papertrail/remote_syslog2/releases/download/v0.21/remote_syslog_linux_arm64.tar.gz' | tar zxf -
+fi
+
+cp remote_syslog/remote_syslog /usr/local/bin/
+popd
+
+cat >/etc/log_files.yml <<EOF
+files:
+    - /var/log/nginx/*.err
+exclude_patterns:
+    - smbd_calculate_access_mask_fsp
+destination:
+    host: ${LOG_DEST_HOST}
+    port: ${LOG_DEST_PORT}
+    protocol: tls
+EOF
+
+cat >/lib/systemd/system/remote-syslog.service <<EOF
+[Unit]
+Description=remote_syslog2
+Documentation=https://github.com/papertrail/remote_syslog2
+After=network-online.target
+
+[Service]
+ExecStartPre=/usr/bin/test -e /etc/log_files.yml
+ExecStart=/usr/local/bin/remote_syslog -D
+Restart=always
+User=root
+Group=root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl enable remote-syslog
+
+cp /infra/init/log-instance-id.service /lib/systemd/system/log-instance-id.service
+systemctl enable log-instance-id
+
+# The default exclude regex ('^/.+$') keeps the legacy "/-only" behaviour for
+# nodes that have no real data mount. Hosts with extra data mounts (e.g.
+# conan-node) call install-agent.sh themselves with FS_IGNORE set.
+INSTALL_TYPE="${INSTALL_TYPE}" /infra/grafana/install-agent.sh
+
+# Skip NFS setup if SKIP_NFS_SETUP is set
+if [ "${SKIP_NFS_SETUP:-}" != "1" ]; then
+  mkdir -p /efs
+  if ! grep "/efs nfs" /etc/fstab; then
+    echo "fs-db4c8192.efs.us-east-1.amazonaws.com:/ /efs nfs nfsvers=4.1,rsize=1048576,wsize=1048576,hard,timeo=600,retrans=2,noresvport${EXTRA_NFS_ARGS} 0 0" >>/etc/fstab
+  fi
+fi
+
+# Configure email
+SMTP_PASS=$(aws ssm get-parameter --name /admin/smtp_pass | jq -r .Parameter.Value)
+cat >/etc/ssmtp/ssmtp.conf <<EOF
+root=postmaster
+mailhub=email-smtp.us-east-1.amazonaws.com
+hostname=compiler-explorer.com
+FromLineOverride=NO
+AuthUser=AKIAJZWPG4D3SSK45LJA
+AuthPass=${SMTP_PASS}
+UseTLS=YES
+UseSTARTTLS=YES
+EOF
+cat >/etc/ssmtp/revaliases <<EOF
+ubuntu:admin@compiler-explorer.com:email-smtp.us-east-1.amazonaws.com
+EOF
+
+if [ "${INSTALL_TYPE}" = "ci" ]; then
+  chfn -f 'Compiler Explorer Admin' ubuntu
+else
+  chfn -f 'Compiler Explorer Build Agent' ubuntu
+fi
+chmod 640 /etc/ssmtp/*
+
+# Skip mount if NFS was skipped
+if [ "${SKIP_NFS_SETUP:-}" != "1" ]; then
+  mount -a
+fi
+
+cd /home/ubuntu/
+
+mkdir -p /home/ubuntu/.ssh
+mkdir -p /tmp/auth_keys
+aws s3 sync s3://compiler-explorer/authorized_keys /tmp/auth_keys
+cat /tmp/auth_keys/* >>/home/ubuntu/.ssh/authorized_keys
+rm -rf /tmp/auth_keys
+chown -R ubuntu /home/ubuntu/.ssh
+
+setup_cefs() {
+    # We can hit "too many open files" during autofs mount, so increase limits.
+    mkdir -p /etc/systemd/system/autofs.service.d
+    cat >/etc/systemd/system/autofs.service.d/limits.conf <<EOF
+[Service]
+LimitNOFILE=65536
+EOF
+    systemctl daemon-reload
+    # This part of the manual setup should be kept in sync with `ce_install cefs setup`
+    # To save us having to install `uv` etc in our packer stages we duplicate
+    # the setup here.
+    mkdir /cefs
+    echo "* -fstype=autofs program:/etc/auto.cefs.sub" > /etc/auto.cefs
+    cat > /etc/auto.cefs.sub << 'EOF'
+#!/bin/bash
+key="$1"
+subdir="${key:0:2}"
+echo "-fstype=squashfs,loop,nosuid,nodev,ro :/efs/cefs-images/${subdir}/${key}.sqfs"
+EOF
+    chmod +x /etc/auto.cefs.sub
+    echo "/cefs /etc/auto.cefs --negative-timeout 1" > /etc/auto.master.d/cefs.autofs
+    service autofs restart
+}
+
+# Skip CEFS setup if SKIP_CEFS_SETUP is set
+if [ "${SKIP_CEFS_SETUP:-}" != "1" ]; then
+  setup_cefs
+fi

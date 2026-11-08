@@ -1,0 +1,31 @@
+#!/bin/bash
+
+set -exuo pipefail
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+env EXTRA_NFS_ARGS="" "${DIR}/setup-common.sh"
+
+wget -qO- https://get.docker.com/ | sh
+usermod -aG docker ubuntu
+
+apt -y install mosh fish cronic subversion upx gdb cron make
+chsh ubuntu -s /usr/bin/fish
+
+aws ssm get-parameter --name /admin/ce_private_key | jq -r .Parameter.Value >/home/ubuntu/.ssh/id_rsa
+chmod 600 /home/ubuntu/.ssh/id_rsa
+aws s3 cp s3://compiler-explorer/authorized_keys/admin.key /home/ubuntu/.ssh/id_rsa.pub
+chown -R ubuntu:ubuntu /home/ubuntu/.ssh
+
+sudo -u ubuntu fish setup.fish
+crontab -u ubuntu crontab.builder
+
+echo builder >/etc/hostname
+hostname builder
+sed -i "/127.0.0.1/c 127.0.0.1 localhost builder" /etc/hosts
+mkdir -p /etc/cloud/cloud.cfg.d
+echo "preserve_hostname: true" >/etc/cloud/cloud.cfg.d/99-ce.cfg
+
+mv /infra /home/ubuntu/infra
+chown -R ubuntu:ubuntu /home/ubuntu/infra
+sudo -u ubuntu make -C /home/ubuntu/infra ce

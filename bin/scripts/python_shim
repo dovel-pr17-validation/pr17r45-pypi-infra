@@ -1,0 +1,24 @@
+#!/bin/bash
+
+set -euo pipefail
+
+if [[ "$(uname -s)" = "Darwin" ]]; then
+  ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+else
+  ROOT_DIR=$(readlink -f "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/../..")
+fi
+MY_NAME=$(basename "$0")
+
+if ! make -sq -C "${ROOT_DIR}" ce; then
+    echo "python environment is out of date"
+    echo "please run 'make ce' in the top level directory"
+    echo "(this is not done automatically as it can be a lengthy and surprising process)"
+    exit 1
+fi
+
+cd "${ROOT_DIR}"
+# Use system uv if available, otherwise use local installation
+UV_BIN=$(command -v uv 2>/dev/null || echo "${ROOT_DIR}/.uv/uv")
+exec "${UV_BIN}" run python \
+    -c "import sys; sys.path.append('${ROOT_DIR}/bin'); from lib.${MY_NAME} import main; main()" \
+    "$@"

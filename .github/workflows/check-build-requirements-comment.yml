@@ -1,0 +1,95 @@
+name: Post Build Requirements Comment
+
+on:
+  workflow_run:
+    workflows: ["Check Build Requirements"]
+    types:
+      - completed
+
+permissions:
+  actions: read
+  pull-requests: write
+
+jobs:
+  comment:
+    runs-on: ubuntu-latest
+    if: github.event.workflow_run.conclusion == 'success'
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: build-check-results
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+        continue-on-error: true
+        id: download
+
+      - name: Post PR comment
+        if: steps.download.outcome == 'success'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('fs');
+
+            if (!fs.existsSync('build_check_output.txt') || !fs.existsSync('pr_number.txt')) {
+              console.log('No build check results found');
+              return;
+            }
+
+            const comment = fs.readFileSync('build_check_output.txt', 'utf8');
+            const artifactPrNumber = parseInt(fs.readFileSync('pr_number.txt', 'utf8').trim(), 10);
+            const heading = '## Build Required';
+
+            // The artifact comes from the PR's own run, so trust the PR number from the event instead.
+            // pull_requests is empty for fork PRs, so fall back to finding the open PR by head branch + SHA.
+            const run = context.payload.workflow_run;
+            let prNumber = run.pull_requests?.[0]?.number;
+            if (!prNumber && run.head_repository) {
+              const { data: prs } = await github.rest.pulls.list({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                state: 'open',
+                head: `${run.head_repository.owner.login}:${run.head_branch}`,
+              });
+              prNumber = prs.find(pr => pr.head.sha === run.head_sha)?.number;
+            }
+
+            if (!prNumber) {
+              console.log(`No open PR found for ${run.head_repository?.full_name}@${run.head_sha}; not commenting`);
+              return;
+            }
+            if (artifactPrNumber !== prNumber) {
+              console.log(`Artifact PR number ${artifactPrNumber} does not match event PR #${prNumber}; not commenting`);
+              return;
+            }
+            if (!comment.includes(heading)) {
+              console.log('Build check output lacks the expected heading; not commenting');
+              return;
+            }
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+            });
+
+            const botComment = comments.find(c =>
+              c.user.login === 'github-actions[bot]' &&
+              c.body.includes(heading)
+            );
+
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: comment
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: prNumber,
+                body: comment
+              });
+            }

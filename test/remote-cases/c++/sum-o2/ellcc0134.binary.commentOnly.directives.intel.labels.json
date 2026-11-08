@@ -1,0 +1,19 @@
+{
+  "okToCache": true, 
+  "code": 1, 
+  "asm": [
+    {
+      "text": "<Compilation failed>", 
+      "source": null
+    }
+  ], 
+  "stderr": [
+    {
+      "text": "/opt/compiler-explorer/ellcc-0.1.34/bin/ld.lld: error: failed to open /tmp/compiler-explorer-compiler117315-56-1icui0z.s3h43oko6r/output.s: Not supported"
+    }, 
+    {
+      "text": "clang-3.9: error: linker command failed with exit code 1 (use -v to see invocation)"
+    }
+  ], 
+  "stdout": []
+}

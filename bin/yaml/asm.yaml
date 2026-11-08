@@ -1,0 +1,20 @@
+compilers:
+  asm:
+    nasm:
+      type: s3tarballs
+      check_exe: bin/nasm -v
+      targets:
+        - 2.12.02
+        - 2.13.02
+        - 2.13.03
+        - 2.14.02
+        - 2.16.01
+        - "3.00"
+        - "3.01"
+    beebasm:
+      type: s3tarballs
+      targets:
+        - "1.09"
+        - "1.10"
+        - "1.11"
+      check_exe: beebasm --help

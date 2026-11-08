@@ -1,0 +1,700 @@
+do {
+  $ping = test-connection -comp "s3.amazonaws.com" -count 1 -Quiet
+} until ($ping)
+
+# Get metadata token for IMDSv2
+$token = Invoke-WebRequest -Method PUT -Uri "http://169.254.169.254/latest/api/token" -Headers @{"X-aws-ec2-metadata-token-ttl-seconds" = "21600"} -UseBasicParsing
+$tokenHeader = @{"X-aws-ec2-metadata-token" = $token.Content}
+
+# Get Environment tag
+$envTag = Invoke-WebRequest -Uri "http://169.254.169.254/latest/meta-data/tags/instance/Environment" -Headers $tokenHeader -UseBasicParsing
+$env:CE_ENV = $envTag.Content -as [string]
+
+# Get Color tag for blue-green deployment queue routing
+Write-Host "Detecting instance color..."
+try {
+    $colorTag = Invoke-WebRequest -Uri "http://169.254.169.254/latest/meta-data/tags/instance/Color" -Headers $tokenHeader -UseBasicParsing -ErrorAction Stop
+    $instanceColor = $colorTag.Content -as [string]
+    Write-Host "Instance color: $instanceColor"
+}
+catch {
+    Write-Host "No instance color detected, using legacy queue routing"
+    $instanceColor = $null
+}
+
+if ([string]::IsNullOrEmpty($env:CE_ENV)) {
+    Write-Host "Environment tag not set!!"
+    exit 1
+}
+Write-Host "Running in environment $($env:CE_ENV)"
+$DEPLOY_DIR = "/compilerexplorer"
+$COMPILERS_FILE = "$DEPLOY_DIR/discovered-compilers.json"
+$CE_ENV = $env:CE_ENV
+$CE_USER = "ce"
+
+# Written at the end of this script; `ce win-runner start` waits on it. Cleared here because
+# C:\tmp survives a reboot, so a file left by the last boot would report ready immediately.
+$STARTUP_COMPLETE_FILE = "C:\tmp\ce-startup-complete"
+Remove-Item -Path $STARTUP_COMPLETE_FILE -Force -ErrorAction SilentlyContinue
+$env:PATH = "$env:PATH;C:\Program Files\Amazon\AWSCLIV2"
+$loghost = "todo"
+$logport = "80"
+
+function GetBetterHostname {
+    $token = Invoke-WebRequest -Method PUT -Uri "http://169.254.169.254/latest/api/token" -Headers @{"X-aws-ec2-metadata-token-ttl-seconds" = "21600"} -UseBasicParsing
+    $meta = Invoke-WebRequest -Uri "http://169.254.169.254/latest/meta-data/hostname" -Headers @{"X-aws-ec2-metadata-token" = $token.Content} -UseBasicParsing
+    return $meta.Content -as [string] -replace ".ec2.internal",""
+}
+
+$betterComputerName = GetBetterHostname
+Write-Host "AWS Hostname $betterComputerName"
+
+function update_code {
+    Write-Host "Current environment $CE_ENV"
+    $versionUrl = "https://s3.amazonaws.com/compiler-explorer/version/$CE_ENV"
+    Remove-Item -Path "/tmp/s3key.txt" -Force -ErrorAction SilentlyContinue
+    Invoke-WebRequest -Uri $versionUrl -OutFile "/tmp/s3key.txt"
+
+    # Errors here are not terminating, so without these checks a missing or empty version file
+    # gets as far as unzipping the bucket listing, and the failure reads as an Expand-Archive
+    # problem rather than a missing build.
+    if (-not (Test-Path "/tmp/s3key.txt")) {
+        throw "No build set for $CE_ENV : could not fetch $versionUrl"
+    }
+
+    $S3_KEY = Get-Content -Path "/tmp/s3key.txt"
+    if ([string]::IsNullOrWhiteSpace($S3_KEY)) {
+        throw "No build set for $CE_ENV : $versionUrl is empty"
+    }
+
+    # should not be needed, but just in case we copy pasted the file
+    $S3_KEY = $S3_KEY -replace ".tar.xz","zip"
+
+    get_released_code -URL "https://s3.amazonaws.com/compiler-explorer/$S3_KEY"
+    get_discovered_compilers -S3_KEY $S3_KEY
+}
+
+function get_discovered_compilers {
+    param (
+        $S3_KEY
+    )
+
+    # dist/gh/main/18675.zip is discovered as gh-18675.json, uploaded by ce win-runner
+    # uploaddiscovery. Must follow get_released_code, which empties the deploy directory.
+    $buildnumber = [IO.Path]::GetFileNameWithoutExtension($S3_KEY)
+    $url = "https://s3.amazonaws.com/compiler-explorer/dist/discovery/$CE_ENV/gh-$buildnumber.json"
+    Write-Host "Discovered compilers from $url"
+    try {
+        Invoke-WebRequest -Uri $url -OutFile $COMPILERS_FILE
+    } catch {
+        # Not having one is fine: Compiler Explorer discovers for itself, just more slowly.
+        Write-Host "No discovered compilers available: $_"
+        Remove-Item -Path $COMPILERS_FILE -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function get_released_code {
+    param (
+        $URL
+    )
+
+    Write-Host "Download build from: $URL"
+    Invoke-WebRequest -Uri $URL -OutFile "/tmp/build.zip"
+
+    Write-Host "Unzipping"
+    Remove-Item -Path "/compilerexplorer" -Force -Recurse
+    New-Item -Path "./" -Name "compilerexplorer" -ItemType "directory" -Force
+    Expand-Archive -Path "/tmp/build.zip" -DestinationPath $DEPLOY_DIR
+}
+
+function GetLatestCeWinFileCache {
+    Write-Host "Fetching latest CeWinFileCache release"
+
+    $releaseUrl = "https://api.github.com/repos/compiler-explorer/ce-win-file-cache/releases/latest"
+    $release = Invoke-RestMethod -Uri $releaseUrl -UseBasicParsing
+
+    $zipAsset = $release.assets | Where-Object { $_.name -like "ce-win-file-cache*.zip" } | Select-Object -First 1
+
+    if (-not $zipAsset) {
+        Write-Host "No ce-win-file-cache zip asset found in latest release"
+        return
+    }
+
+    $downloadUrl = $zipAsset.browser_download_url
+    Write-Host "Downloading from: $downloadUrl"
+
+    $tmpZip = "C:\tmp\ce-win-file-cache.zip"
+    $tmpExtract = "C:\tmp\ce-win-file-cache-extract"
+    Invoke-WebRequest -Uri $downloadUrl -OutFile $tmpZip -UseBasicParsing
+
+    Write-Host "Extracting to C:\tmp\cewinfilecache"
+    if (Test-Path $tmpExtract) {
+        Remove-Item -Path $tmpExtract -Force -Recurse
+    }
+    Expand-Archive -Path $tmpZip -DestinationPath $tmpExtract -Force
+
+    $innerFolder = Get-ChildItem -Path $tmpExtract -Directory | Select-Object -First 1
+    if ($innerFolder) {
+        if (Test-Path "C:\tmp\cewinfilecache") {
+            Remove-Item -Path "C:\tmp\cewinfilecache" -Force -Recurse
+        }
+        Move-Item -Path $innerFolder.FullName -Destination "C:\tmp\cewinfilecache" -Force
+    }
+
+    Remove-Item -Path $tmpExtract -Force -Recurse
+    Remove-Item -Path $tmpZip -Force
+    Write-Host "CeWinFileCache installed successfully"
+}
+
+function GetCeWinFileCacheConfig {
+    Write-Host "Downloading CeWinFileCache configuration"
+
+    $configUrl = "https://raw.githubusercontent.com/compiler-explorer/ce-win-file-cache/refs/heads/main/compilers.production.json"
+    $configPath = "C:\tmp\cewinfilecache\compilers.production.json"
+
+    Invoke-WebRequest -Uri $configUrl -OutFile $configPath -UseBasicParsing
+
+    Write-Host "CeWinFileCache configuration downloaded successfully"
+}
+
+function GetConf {
+    Param(
+        $Name,
+        $Default = ""
+    )
+
+    try {
+        return (aws ssm get-parameter --name "$Name" | ConvertFrom-Json).Parameter.Value
+    }
+    catch {
+        Write-Host "GetConf($Name) raised Exception: $_"
+        return $Default
+    }
+}
+
+function GetLogHost {
+    return GetConf -Name "/compiler-explorer/logDestHost";
+}
+
+function GetLogPort {
+    return GetConf -Name "/compiler-explorer/logDestPort";
+}
+
+function DenyAccessByCE {
+    param (
+        $Path
+    )
+
+    $ACL = Get-ACL -Path $Path
+    $AccessRule = New-Object System.Security.AccessControl.FileSystemAccessRule("ce", "FullControl", "Deny")
+    $ACL.AddAccessRule($AccessRule)
+    $ACL | Set-Acl -Path $Path
+}
+
+function GeneratePassword {
+    $pass = -join ((1..15) | %{get-random -minimum 33 -maximum 127 | %{[char]$_}}) + -join ((1..2) | %{get-random -minimum 33 -maximum 48 | %{[char]$_}}) -replace "c","" -replace "e", "" -replace "C","" -replace "E", "";
+    $securePassword = ConvertTo-SecureString $pass -AsPlainText -Force;
+    return $securePassword;
+}
+
+function RecreateUser {
+    param(
+        [securestring] $securePassword
+    )
+
+    $exists = (Get-LocalUser $CE_USER -ErrorAction Ignore) -as [bool];
+    if ($exists) {
+        Remove-LocalUser $CE_USER;
+    }
+
+    New-LocalUser -User $CE_USER -Password $securePassword -PasswordNeverExpires -FullName "CE" -Description "Special user for running Compiler Explorer";
+    Add-LocalGroupMember -Group "Users" -Member $CE_USER;
+
+    ConfigureUserRights -SID (Get-LocalUser $CE_USER).SID
+}
+
+function DisableSmbServer {
+    # Nothing connects to these instances over SMB, and leaving the server side up gives
+    # sandboxed code a loopback UNC target that the firewall cannot filter -- Windows exempts
+    # loopback. LanmanWorkstation is the client half, so Z: still mounts.
+    Set-Service -Name LanmanServer -StartupType Disabled
+    Stop-Service -Name LanmanServer -Force
+
+    $status = (Get-Service -Name LanmanServer).Status
+    if ($status -ne "Stopped") {
+        Write-Host "WARNING: LanmanServer is $status, expected Stopped; loopback UNC remains reachable"
+    }
+}
+
+function ConfigureSmbRights {
+    $tmpfile = "c:\tmp\secpol.cfg"
+    secedit /export /cfg $tmpfile
+    $secpol = (Get-Content $tmpfile)
+
+    $Value = $secpol | Where-Object{ $_ -like "MACHINE\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters\AllowInsecureGuestAuth" }
+    $Index = [array]::IndexOf($secpol,$Value)
+    if ($Index -eq -1) {
+        $Index = [array]::IndexOf($secpol, "[Registry Values]")
+        $idx2 = $Index + 1
+        $NewValue = "MACHINE\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters\AllowInsecureGuestAuth=4,1"
+        $newpol = $secpol[0..$Index]
+        $newpol += ($NewValue)
+        $newpol += $secpol[$idx2..$secpol.Length]
+        $secpol = $newpol
+    } else {
+        $NewValue = "MACHINE\SYSTEM\CurrentControlSet\Services\LanmanWorkstation\Parameters\AllowInsecureGuestAuth=4,1"
+        $secpol.item($Index) = $NewValue
+    }
+
+    $secpol | out-file $tmpfile -Force
+    secedit /configure /db c:\windows\security\local.sdb /cfg $tmpfile
+    Remove-Item -Path $tmpfile
+
+    gpupdate /Force
+}
+
+function ConfigureUserRights {
+    param(
+        [String] $SID
+    )
+
+    $tmpfile = "c:\tmp\secpol.cfg"
+    secedit /export /cfg $tmpfile
+    $secpol = (Get-Content $tmpfile)
+
+    $Value = $secpol | Where-Object{ $_ -like "SeBatchLogonRight*" }
+    $Index = [array]::IndexOf($secpol,$Value)
+
+    $NewValue = $Value + ",*" + $SID
+    $secpol.item($Index) = $NewValue
+
+    $secpol | out-file $tmpfile -Force
+    secedit /configure /db c:\windows\security\local.sdb /cfg $tmpfile
+    Remove-Item -Path $tmpfile
+
+    gpupdate /Force
+}
+
+function InstallAsSystemService {
+    param(
+        [string] $Name,
+        [string] $Exe,
+        [array] $Arguments,
+        [string] $WorkingDirectory
+    )
+
+    $tmplog = "C:/tmp/log"
+    Write-Host "nssm.exe install $Name $Exe"
+    /nssm/win64/nssm.exe install $Name $Exe
+    if ($Arguments.Length -gt 0) {
+        Write-Host "nssm.exe set $Name AppParameters" ($Arguments -join " ")
+        /nssm/win64/nssm.exe set $Name AppParameters ($Arguments -join " ")
+    }
+    Write-Host "nssm.exe set $Name AppDirectory $WorkingDirectory"
+    /nssm/win64/nssm.exe set $Name AppDirectory $WorkingDirectory
+    Write-Host "nssm.exe set $Name AppStdout $tmplog/$Name-svc.log"
+    /nssm/win64/nssm.exe set $Name AppStdout "$tmplog/$Name-svc.log"
+    Write-Host "nssm.exe set $Name AppStderr $tmplog/$Name-svc.log"
+    /nssm/win64/nssm.exe set $Name AppStderr "$tmplog/$Name-svc.log"
+
+    Write-Host "nssm.exe set $Name AppExit Default Exit"
+    /nssm/win64/nssm.exe set $Name AppExit Default Exit
+
+    Write-Host "nssm.exe set $Name Start SERVICE_DEMAND_START"
+    /nssm/win64/nssm.exe set $Name Start SERVICE_DEMAND_START
+
+    Write-Host "nssm.exe reset $Name ObjectName"
+    /nssm/win64/nssm.exe reset $Name ObjectName
+
+    Write-Host "nssm.exe start $Name"
+    /nssm/win64/nssm.exe start $Name
+}
+
+function InstallAsService {
+    param(
+        [string] $Name,
+        [string] $Exe,
+        [array] $Arguments,
+        [string] $WorkingDirectory,
+        [PSCredential] $User,
+        [securestring] $Password
+    )
+
+    $tmplog = "C:/tmp/log"
+    Write-Host "nssm.exe install $Name $Exe"
+    /nssm/win64/nssm.exe install $Name $Exe
+    if ($Arguments.Length -gt 0) {
+        Write-Host "nssm.exe set $Name AppParameters" ($Arguments -join " ")
+        /nssm/win64/nssm.exe set $Name AppParameters ($Arguments -join " ")
+    }
+    Write-Host "nssm.exe set $Name AppDirectory $WorkingDirectory"
+    /nssm/win64/nssm.exe set $Name AppDirectory $WorkingDirectory
+    Write-Host "nssm.exe set $Name AppStdout $tmplog/$Name-svc.log"
+    /nssm/win64/nssm.exe set $Name AppStdout "$tmplog/$Name-svc.log"
+    Write-Host "nssm.exe set $Name AppStderr $tmplog/$Name-svc.log"
+    /nssm/win64/nssm.exe set $Name AppStderr "$tmplog/$Name-svc.log"
+
+    Write-Host "nssm.exe set $Name AppExit Default Exit"
+    /nssm/win64/nssm.exe set $Name AppExit Default Exit
+
+    $Username = $Credential.GetNetworkCredential().Username
+    $PlainTextPassword = ConvertFrom-SecureString -SecureString $Password -AsPlainText
+
+    Write-Host "nssm.exe set $Name ObjectName $env:COMPUTERNAME\$Username ..."
+    /nssm/win64/nssm.exe set $Name ObjectName "$env:COMPUTERNAME\$Username" "$PlainTextPassword"
+
+    Write-Host "nssm.exe start $Name"
+    /nssm/win64/nssm.exe start $Name
+}
+
+function InstallAndRunCEAsSystem {
+    $SMBServer = GetSMBServerIP -CeEnv $CE_ENV
+
+    $runargs = @("c:\tmp\infra\init\run.ps1","-LogHost",$loghost,"-LogPort",$logport,"-CeEnv",$CE_ENV,"-HostnameForLogging",$betterComputerName,"-SMBServer",$SMBServer)
+    if ($instanceColor) {
+        $runargs += @("-InstanceColor",$instanceColor)
+    }
+    $runargsJoined = $runargs -join " "
+
+    InstallAsSystemService -Name "ce" -Exe "C:\Program Files\PowerShell\7\pwsh.exe" -WorkingDirectory "C:\tmp" -Arguments $runargsJoined
+}
+
+function InstallCERunTask {
+    param(
+        [PSCredential] $Credential,
+        [securestring] $Password,
+        [string] $CeEnv,
+        [string] $HostnameForLogging,
+        [string] $SMBServer,
+        [string] $InstanceColor = $null
+    )
+
+    $runargs = @("c:\tmp\infra\init\run.ps1","-LogHost",$loghost,"-LogPort",$logport,"-CeEnv",$CeEnv,"-HostnameForLogging",$HostnameForLogging,"-SMBServer",$SMBServer)
+    if ($InstanceColor) {
+        $runargs += @("-InstanceColor",$InstanceColor)
+    }
+    $runargsJoined = $runargs -join " "
+
+    InstallAsService -Name "ce" -Exe "C:\Program Files\PowerShell\7\pwsh.exe" -WorkingDirectory "C:\tmp" -Arguments $runargsJoined -User $Credential -Password $Password
+}
+
+function ConfigureFileRights {
+    DenyAccessByCE -Path "C:\Program Files\Grafana Agent\agent-config.yaml"
+    DenyAccessByCE -Path "C:\tmp\log\cestartup-svc.log"
+}
+
+function CreateCredAndRun {
+    $pass = GeneratePassword;
+    RecreateUser $pass;
+    $credential = New-Object System.Management.Automation.PSCredential($CE_USER,$pass);
+
+    ConfigureFileRights
+
+    $SMBServer = GetSMBServerIP -CeEnv $CE_ENV
+
+    InstallCERunTask -Credential $credential -Password $pass -CeEnv $CE_ENV -HostnameForLogging $betterComputerName -SMBServer $SMBServer -InstanceColor $instanceColor
+}
+
+function GetLatestCEWrapper {
+    Write-Host "Fetching latest CEWrapper.exe"
+    Copy-Item -Path "Y:/cewrapper/cewrapper.exe" -Destination "/tmp/cewrapper.exe"
+    New-Item -Path "/cewrapper" -ItemType Directory -Force
+    Move-Item -Path "/tmp/cewrapper.exe" -Destination "/cewrapper/cewrapper.exe" -Force
+}
+
+function PrepareNulDevice {
+    # The kernel resets \Device\Null's DACL every boot, and the default does not grant the AppContainer
+    # SIDs, so anything sandboxed by cewrapper that touches NUL fails with access denied. Grants it to
+    # all app packages; machine wide, has to be redone on every boot, needs to run elevated.
+    Write-Host "Granting AppContainer access to the NUL device"
+    & /cewrapper/cewrapper.exe --prepare-nul
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Failed to prepare the NUL device (exit code $LASTEXITCODE)"
+    }
+}
+
+function InitializeAgentConfig {
+    Write-Host "Setting up Grafana Agent"
+    $config = Get-Content -Path "/tmp/infra/grafana/agent-win.yaml"
+    $config = $config.Replace("@HOSTNAME@", $betterComputerName)
+    $config = $config.Replace("@ENV@", $CE_ENV)
+    $prom_pass = ""
+    try {
+        $prom_pass = GetConf -Name "/compiler-explorer/promPassword"
+    } catch {
+    }
+    $config = $config.Replace("@PROM_PASSWORD@", $prom_pass)
+    $agentConfig = "C:\Program Files\Grafana Agent\agent-config.yaml"
+    Set-Content -Path $agentConfig -Value $config
+
+    icacls.exe $agentConfig /inheritance:r /grant "Administrators:F" /grant "SYSTEM:F"
+    $agentAccount = (Get-CimInstance Win32_Service -Filter "DisplayName='Grafana Agent'").StartName
+    if ($agentAccount -and $agentAccount -ne "LocalSystem") {
+        Write-Host "Grafana Agent runs as $agentAccount, granting it read"
+        icacls.exe $agentConfig /grant "${agentAccount}:R"
+    }
+
+    Stop-Service "Grafana Agent"
+    $started = (Start-Service "Grafana Agent") -as [bool]
+    if (-not $started) {
+        Start-Service "Grafana Agent"
+    }
+}
+
+function GetSMBServerIP {
+    Param(
+        [string] $CeEnv
+    )
+
+    $configPath = "/compiler-explorer/smbserverProd"
+    if ($CeEnv -like "*staging") {
+        $configPath = "/compiler-explorer/smbserverStaging"
+    } elseif ($CeEnv -like "*test") {
+        $configPath = "/compiler-explorer/smbserverTest"
+    }
+
+    $smbserver = GetConf -Name $configPath -Default "smb-address-unknown";
+
+    return $smbserver
+}
+
+function MountY {
+    $exists = (Get-SmbMapping Y:) -as [bool]
+    if ($exists) {
+        Write-Host "Already mapped"
+        return
+    }
+
+    $smb_ip = GetSMBServerIP -CeEnv "prod"
+    while (-not $exists) {
+        try {
+            Write-Host "Mapping Y:"
+            $exists = (New-SmbMapping -LocalPath "Y:" -RemotePath "\\$smb_ip\winshared") -as [bool]
+        } catch {
+            Write-Host "New-SmbMapping for Y:\ -> \\$smb_ip\winshared failed: $_"
+        }
+    }
+}
+
+function UnMountY {
+     Remove-SmbMapping -LocalPath 'Y:' -Force
+}
+
+function GetResolvedIPAddress {
+    param(
+        [string] $Hostname
+    )
+
+    $resolved = Resolve-DnsName -Name $hostname
+    $first = $resolved[0]
+    if (!$first.IPAddress) {
+        return (GetResolvedIPAddress $first.NameHost)
+    } else {
+        return $first.IPAddress
+    }
+}
+
+function AddToHosts {
+    param(
+        [string] $Hostname
+    )
+
+    $ip = GetResolvedIPAddress $hostname
+
+    $content = Get-Content "C:\Windows\System32\drivers\etc\hosts"
+    $content = $content,($ip + " " + $Hostname)
+    Set-Content -Path "C:\Windows\System32\drivers\etc\hosts" -Value $content
+
+    return $ip
+}
+
+function AddConanToHostsAndFirewall {
+    $hostname = "conan.compiler-explorer.com"
+    $ip = "18.160.18.12"
+
+    $content = Get-Content "C:\Windows\System32\drivers\etc\hosts"
+    $content = $content,($ip + " " + $hostname)
+    Set-Content -Path "C:\Windows\System32\drivers\etc\hosts" -Value $content
+
+    netsh advfirewall firewall add rule name="Allow IP for $hostname" dir=out remoteip="$ip" action=allow enable=yes
+}
+
+function AddLocalHost {
+    $content = Get-Content "C:\Windows\System32\drivers\etc\hosts"
+    $content = $content,("127.0.0.1 localhost")
+    Set-Content -Path "C:\Windows\System32\drivers\etc\hosts" -Value $content
+}
+
+function ConfigureSSH {
+    # start.ps1 is pulled from main at every boot, so this runs on images predating the
+    # OpenSSH install in packer/InstallTools.ps1.
+    if (-not (Get-Service -Name sshd -ErrorAction SilentlyContinue)) {
+        Write-Host "No sshd service in this image, skipping SSH setup"
+        return
+    }
+
+    # Taken from the service rather than hardcoded: a Feature on Demand install puts these in
+    # System32\OpenSSH, the release zip in Program Files\OpenSSH.
+    $sshdExe = (Get-CimInstance Win32_Service -Filter "Name='sshd'").PathName.Trim('"')
+    $sshdBin = Split-Path -Parent $sshdExe
+
+    $sshDir = "C:\ProgramData\ssh"
+    New-Item -Path $sshDir -ItemType Directory -Force | Out-Null
+
+    Write-Host "Fetching authorized keys"
+    $keyDir = "C:\tmp\auth_keys"
+    Remove-Item -Path $keyDir -Recurse -Force -ErrorAction SilentlyContinue
+    New-Item -Path $keyDir -ItemType Directory -Force | Out-Null
+    aws s3 sync s3://compiler-explorer/authorized_keys $keyDir
+
+    # sshd ignores a user's own .ssh/authorized_keys for members of the administrators group;
+    # their keys have to live here instead. It also silently refuses the file if anyone other
+    # than Administrators or SYSTEM can write it, hence the icacls reset. ASCII, because sshd
+    # will not read a BOM.
+    $authKeys = "$sshDir\administrators_authorized_keys"
+    Get-Content -Path "$keyDir\*.key" | Set-Content -Path $authKeys -Encoding ascii
+    Remove-Item -Path $keyDir -Recurse -Force
+    icacls.exe $authKeys /inheritance:r /grant "Administrators:F" /grant "SYSTEM:F"
+
+    # The logging is not optional in practice: sshd rejects a badly-permissioned key file
+    # without telling the client why, and C:\ProgramData\ssh\logs\sshd.log is the only place
+    # that says so.
+    Set-Content -Path "$sshDir\sshd_config" -Encoding ascii -Value @(
+        "PubkeyAuthentication yes",
+        "PasswordAuthentication no",
+        "SyslogFacility LOCAL0",
+        "LogLevel INFO",
+        "Subsystem sftp sftp-server.exe",
+        "Match Group administrators",
+        "       AuthorizedKeysFile __PROGRAMDATA__/ssh/administrators_authorized_keys"
+    )
+
+    # Per instance rather than baked into the AMI.
+    & "$sshdBin\ssh-keygen.exe" -A
+
+    netsh advfirewall firewall add rule name="allow sshd in" dir=in program="$sshdExe" action=allow enable=yes
+
+    Set-Service -Name sshd -StartupType Automatic
+    Restart-Service -Name sshd
+}
+
+function GetAdjacentIPv4 {
+    param(
+        [string] $Address,
+        [int] $Offset
+    )
+
+    $bytes = ([System.Net.IPAddress]::Parse($Address)).GetAddressBytes()
+    [array]::Reverse($bytes)
+    $value = [System.BitConverter]::ToUInt32($bytes, 0) + $Offset
+    $result = [System.BitConverter]::GetBytes([uint32]$value)
+    [array]::Reverse($result)
+
+    return ([System.Net.IPAddress]::new([byte[]]$result)).ToString()
+}
+
+function BlockSmbExceptServer {
+    param(
+        [string] $SmbServer
+    )
+
+    $parsed = [System.Net.IPAddress]::Any
+    if (-not [System.Net.IPAddress]::TryParse($SmbServer, [ref]$parsed)) {
+        # GetConf returns "smb-address-unknown" if SSM is unreachable; block rather than open.
+        Write-Host "No usable SMB server address, blocking SMB outbound entirely"
+        netsh advfirewall firewall add rule name="Block SMB out" dir=out protocol=TCP remoteport=139,445 action=block enable=yes
+        return
+    }
+
+    # Block beats allow in Windows Firewall, so the server has to be excluded by address rather
+    # than allowed back in afterwards.
+    $below = GetAdjacentIPv4 -Address $SmbServer -Offset -1
+    $above = GetAdjacentIPv4 -Address $SmbServer -Offset 1
+    $except = "0.0.0.0-$below,$above-255.255.255.255"
+
+    netsh advfirewall firewall add rule name="Block SMB out except $SmbServer" dir=out protocol=TCP remoteport=139,445 remoteip="$except" action=block enable=yes
+}
+
+function ConfigureFirewall {
+    netsh advfirewall firewall add rule name="TCP Port 80" dir=in action=allow protocol=TCP localport=80 enable=yes
+    netsh advfirewall firewall add rule name="TCP Port 80" dir=out action=allow protocol=TCP localport=80 enable=yes
+
+    netsh advfirewall firewall add rule name="allow nginx all" dir=out program="c:\nginx\nginx.exe" action=allow enable=yes
+    netsh advfirewall firewall add rule name="allow node all" dir=in program="C:\Program Files\nodejs\node.exe" action=allow enable=yes
+
+    netsh advfirewall firewall add rule name="agent-windows all out" dir=out program="C:\Program Files\Grafana Agent\agent-windows-amd64.exe" action=allow enable=yes
+
+    netsh advfirewall firewall add rule name="allow ssm-agent all out" dir=out program="C:\Program Files\Amazon\SSM\ssm-agent-worker.exe" action=allow enable=yes
+    netsh advfirewall firewall add rule name="allow ssm-agent all in" dir=in program="C:\Program Files\Amazon\SSM\ssm-agent-worker.exe" action=allow enable=yes
+    netsh advfirewall firewall add rule name="allow ssm-session all out" dir=out program="C:\Program Files\Amazon\SSM\ssm-session-worker.exe" action=allow enable=yes
+    netsh advfirewall firewall add rule name="allow ssm-session all in" dir=in program="C:\Program Files\Amazon\SSM\ssm-session-worker.exe" action=allow enable=yes
+
+    $ip = GetSMBServerIP -CeEnv $CE_ENV
+    netsh advfirewall firewall add rule name="Allow IP $ip out" dir=out remoteip="$ip" action=allow enable=yes
+    netsh advfirewall firewall add rule name="Allow IP $ip in" dir=in remoteip="$ip" action=allow enable=yes
+
+    BlockSmbExceptServer -SmbServer $ip
+
+    AddLocalHost
+
+    $ip = "169.254.169.254"
+    netsh advfirewall firewall add rule name="Allow IP $ip out" dir=out remoteip="$ip" action=allow enable=yes
+    netsh advfirewall firewall add rule name="Allow IP $ip in" dir=in remoteip="$ip" action=allow enable=yes
+
+    $restrict = ((GetLogHost), "ssm.us-east-1.amazonaws.com", "ssmmessages.us-east-1.amazonaws.com", "ec2messages.us-east-1.amazonaws.com", "s3.amazonaws.com", "s3.us-east-1.amazonaws.com", "compiler-explorer-logs.s3.us-east-1.amazonaws.com", "prometheus-us-central1.grafana.net")
+    foreach ($hostname in $restrict) {
+        $ip = AddToHosts $hostname
+        netsh advfirewall firewall add rule name="Allow IP for $hostname" dir=out remoteip="$ip" action=allow enable=yes
+    }
+
+    AddConanToHostsAndFirewall
+
+    # should disable dns, but has consequences to figure out
+    netsh advfirewall firewall delete rule name="Core Networking - DNS (UDP-Out)"
+
+    netsh advfirewall set publicprofile firewallpolicy blockinbound,blockoutbound
+}
+
+# First, so an instance that later hangs mounting the share or fails to find a build is still
+# reachable to debug. Also has to precede ConfigureFirewall: the key sync talks to the bucket's
+# virtual-host name, which the pinned-IP allowlist does not cover.
+ConfigureSSH
+
+DisableSmbServer
+
+ConfigureSmbRights
+
+MountY
+
+GetLatestCEWrapper
+PrepareNulDevice
+GetLatestCeWinFileCache
+GetCeWinFileCacheConfig
+
+UnMountY
+
+InitializeAgentConfig
+
+update_code
+
+# these are only the wintest, the normal amazonwin.properties should be in the CE repo
+Write-Host "Installing properties files"
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/compiler-explorer/windows-docker/main/c++.win32.properties" -OutFile "$DEPLOY_DIR/etc/config/c++.wintest.properties"
+Invoke-WebRequest -Uri "https://raw.githubusercontent.com/compiler-explorer/windows-docker/main/pascal.win32.properties" -OutFile "$DEPLOY_DIR/etc/config/pascal.wintest.properties"
+
+$loghost = GetLogHost
+$logport = GetLogPort
+
+ConfigureFirewall
+
+if ($CE_ENV -eq "winrunner") {
+    # As with runner/gpu-runner in init/start.sh: set the machine up but don't serve anything.
+    # Discovery is driven over SSH by `ce win-runner discovery`.
+    Write-Host "Runner environment, not starting Compiler Explorer"
+} else {
+    #CreateCredAndRun
+    InstallAndRunCEAsSystem
+}
+
+New-Item -Path $STARTUP_COMPLETE_FILE -ItemType File -Force | Out-Null
+Write-Host "Startup complete"

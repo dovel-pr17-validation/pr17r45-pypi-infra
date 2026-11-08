@@ -1,0 +1,276 @@
+tools:
+  cmake:
+    type: tarballs
+    compression: gz
+    url: https://github.com/Kitware/CMake/releases/download/v{{name}}/cmake-{{name}}-Linux-x86_64.tar.gz
+    strip_components: 1
+    dir: cmake-v{{name}}
+    create_untar_dir: true
+    check_exe: bin/cmake --help
+    targets:
+      - 3.26.1
+      - 3.26.4
+      - 3.27.9
+      - 3.28.0-rc5
+      - 3.28.0
+      - 3.28.4
+      - 3.29.2
+      - 3.30.7
+      - 3.31.5
+      - 4.1.2
+      - name: 4.4.2
+        symlink: cmake  # The one distinguished cmake we use for "cmake" on the site
+    experimental:
+      type: tarballs
+      compression: gz
+      url: https://cmake.org/files/dev/cmake-{{name}}-linux-x86_64.tar.gz
+      strip_components: 1
+      dir: cmake-v{{name}}
+      create_untar_dir: true
+      check_exe: bin/cmake --help
+      targets:
+        - 3.29.20240506-g1ea8fa8
+  maven:
+    type: tarballs
+    compression: gz
+    url: https://archive.apache.org/dist/maven/maven-3/{{name}}/binaries/apache-maven-{{name}}-bin.tar.gz
+    dir: maven-{{name}}
+    untar_dir: apache-maven-{{name}}
+    depends:
+      - compilers/java 21.0.2
+    after_stage_script:
+      - '"{{resource_dir}}/maven/prime-repository.sh" apache-maven-{{name}} %DEP0%'
+    check_file: repository/.ce-primed-2
+    targets:
+      - name: 3.9.16
+        symlink: maven
+  ninja:
+    type: ziparchive
+    extract_into_folder: true
+    folder: ninja-v{{name}}
+    url: https://github.com/ninja-build/ninja/releases/download/v{{name}}/ninja-linux.zip
+    dir: ninja-v{{name}}
+    create_untar_dir: true
+    check_exe: ninja --version
+    symlink: ninja
+    targets:
+      - 1.11.1
+  heaptrack:
+    type: s3tarballs
+    compression: xz
+    check_exe: bin/heaptrack --help
+    depends:
+     - tools/patchelf 0.15.0
+    targets:
+      - x86_64-v1.3.0
+      - aarch64-v1.3.0
+    after_stage_script:
+      - /opt/compiler-explorer/patchelf-0.15.0/bin/patchelf --set-rpath /opt/compiler-explorer/heaptrack-{{name}}/lib heaptrack-{{name}}/bin/heaptrack_print
+  glibc-tools-x86_64:
+    type: tarballs
+    compression: xz
+    check_exe: tracer --help
+    symlink: glibc-tools-x86_64
+    dir: glibc-tools-x86_64-{{name}}
+    untar_dir: glibc-tools-x86_64
+    create_untar_dir: true
+    targets:
+      - v1.4
+    url: https://github.com/compiler-explorer/glibc-tools/releases/download/{{name}}/glibc-tools-x86_64.tar.xz
+  glibc-tools-arm64:
+    type: tarballs
+    compression: xz
+    # not x86, so we can't execute
+    check_file: tracer
+    symlink: glibc-tools-arm64
+    dir: glibc-tools-arm64-{{name}}
+    untar_dir: glibc-tools-arm64
+    create_untar_dir: true
+    targets:
+      - v1.5
+    url: https://github.com/compiler-explorer/glibc-tools/releases/download/{{name}}/glibc-tools-arm64.tar.xz
+  iwyu:
+    type: s3tarballs
+    compression: xz
+    check_exe: bin/include-what-you-use --version
+    path_name: iwyu/{{name}}
+    targets:
+      - name: '0.12'
+        after_stage_script:
+          - ln -s /opt/compiler-explorer/clang-8.0.0/lib iwyu-{{name}}/lib
+      - name: '0.20'
+        after_stage_script:
+          - ln -s /opt/compiler-explorer/clang-16.0.0/lib iwyu-{{name}}/lib
+      - name: '0.21'
+        after_stage_script:
+          - ln -s /opt/compiler-explorer/clang-17.0.1/lib iwyu-{{name}}/lib
+      - name: '0.22'
+        after_stage_script:
+          - ln -s /opt/compiler-explorer/clang-18.1.0/lib iwyu-{{name}}/lib
+  pvs-studio:
+    if:
+      - non-free
+      - nightly
+    install_always: true
+    type: tarballs
+    url: https://files.viva64.com/pvs-studio-latest.tgz
+    compression: gz
+    create_untar_dir: true
+    dir: pvs-studio-latest
+    check_exe: bin/pvs-studio --version
+    targets:
+      - latest
+  osaca:
+    type: pip
+    depends:
+      - compilers/python 3.13.0
+    dir: osaca-{{name}}
+    python: '%DEP0%/bin/python3'
+    package: osaca=={{name}}
+    check_exe: bin/osaca --version
+    targets:
+      - 0.7.1
+  uica:
+    type: uv
+    dir: uica-{{name}}
+    script:
+      - git clone --branch {{name}} --recursive https://github.com/compiler-explorer/uiCA.git uica-src
+      - cd uica-src && "${UV}" run --with setuptools python build.py
+    package: ./uica-src
+    check_exe: bin/uica --help
+    targets:
+      - ce
+  rustfmt:
+    type: tarballs
+    dir: rustfmt-{{name}}
+    compression: gz
+    check_exe: rustfmt --version
+    targets:
+      - name: 1.4.36
+        url: https://github.com/rust-lang/rustfmt/releases/download/v1.4.36/rustfmt_linux-x86_64_v1.4.36.tar.gz
+        strip_components: 1
+        create_untar_dir: true
+  tt-metal-headers:
+    type: tarballs
+    compression: gz
+    url: https://github.com/tenstorrent/tt-metal/archive/refs/tags/{{name}}.tar.gz
+    dir: tt-metal-headers-{{name}}
+    create_untar_dir: true
+    strip_components: 1
+    check_file: tt_metal/tt-llk/tt_llk_wormhole_b0/llk_lib/llk_math_eltwise_unary_sfpu.h
+    targets:
+      - v0.71.2
+  mmbutils:
+    if: nightly
+    type: github
+    method: nightlyclone
+    repo: sweharris/MMB_Utils
+    path_name: mmbutils
+    check_file: beeb
+    check_exe: ./beeb
+    targets:
+      - trunk
+  asm-parser:
+    if: nightly
+    type: nightlytarballs
+    dir: asm-parser
+    create_untar_dir: true
+    compression: xz
+    url: https://github.com/compiler-explorer/asm-parser/releases/latest/download/asm-parser.tar.xz
+    check_file: asm-parser
+    targets:
+      - trunk
+  xa:
+    type: tarballs
+    dir: x86-to-6502/xa-{{name}}
+    untar_dir: xa-{{name}}
+    check_exe: bin/xa --version
+    url: https://www.floodgap.com/retrotech/xa/dists/xa-{{name}}.tar.gz
+    compression: gz
+    targets:
+      - 2.3.13
+    after_stage_script:
+      - mv xa-{{name}} xa-build
+      - mkdir -p xa-{{name}}/bin
+      - cd xa-build
+      - make xa uncpk
+      - mv xa ../xa-{{name}}/bin/xa
+      - mv reloc65 ../xa-{{name}}/bin/reloc65
+      - mv ldo65 ../xa-{{name}}/bin/ldo65
+      - mv file65 ../xa-{{name}}/bin/file65
+      - mv printcbm ../xa-{{name}}/bin/printcbm
+      - mv uncpk ../xa-{{name}}/bin/uncpk
+  patchelf:
+    type: tarballs
+    url: https://github.com/NixOS/patchelf/releases/download/{{name}}/patchelf-{{name}}-x86_64.tar.gz
+    compression: gz
+    dir: patchelf-{{name}}
+    untar_dir: .
+    check_exe: bin/patchelf --version
+    targets:
+      - 0.15.0
+  pahole:
+    if: nightly
+    type: nightly
+    check_exe: bin/pahole
+    targets:
+      - trunk
+  fpm:
+    type: singleFile
+    url: https://github.com/fortran-lang/fpm/releases/download/v{{name}}/fpm-{{name}}-linux-x86_64
+    dir: fpm-{{name}}
+    check_exe: fpm --version
+    filename: fpm
+    after_stage_script:
+    - chmod +x fpm
+    targets:
+    - 0.9.0
+  baksmali:
+    type: singleFile
+    dir: baksmali-{{name}}
+    depends:
+      - compilers/java 16.0.1
+    check_exe: "%DEP0%/bin/java -jar {{dir}}/{{filename}} --version"
+    filename: baksmali-{{name}}-fat.jar
+    url: https://storage.googleapis.com/r8-releases/smali/{{name}}/{{filename}}
+    targets:
+      - 3.0.3
+  bloaty:
+    type: s3tarballs
+    compression: xz
+    dir: bloaty-{{name}}
+    check_exe: bin/bloaty --help
+    targets:
+      - "1.1"
+  goldengate:
+    if: non-free
+    type: non-free-s3tarballs
+    compression: gz
+    strip_components: 1
+    dir: goldengate-{{name}}
+    check_exe: bin/iix --version
+    targets:
+      - 2.0.9
+  brontosource:
+    if: non-free
+    type: non-free-s3tarballs
+    compression: xz
+    check_exe: bronto-refactor --help
+    s3_path_prefix: brontosource/{{name}}
+    path_name: brontosource/{{name}}
+    targets:
+      - name: bronto-refactor-ubuntu-22.04-x86-64
+        install_always: true
+  sonar:
+    if:
+      - non-free
+      - nightly
+    install_always: true
+    type: non-free-s3tarballs
+    compression: xz
+    s3_path_prefix: sonar/sonar
+    path_name: sonar
+    strip_components: 1
+    check_file: sonar.sh
+    targets:
+      - latest

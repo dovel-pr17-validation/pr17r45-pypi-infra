@@ -1,0 +1,108 @@
+{
+  "okToCache": true, 
+  "code": 0, 
+  "asm": [
+    {
+      "text": "testFunction(int*, int):                    # @testFunction(int*, int)", 
+      "source": null
+    }, 
+    {
+      "text": "        movq    %rdi, -8(%rsp)", 
+      "source": 1
+    }, 
+    {
+      "text": "        movl    %esi, -12(%rsp)", 
+      "source": 1
+    }, 
+    {
+      "text": "        movl    $0, -16(%rsp)", 
+      "source": 2
+    }, 
+    {
+      "text": "        movl    $0, -20(%rsp)", 
+      "source": 3
+    }, 
+    {
+      "text": ".LBB0_1:                                # =>This Inner Loop Header: Depth=1", 
+      "source": null
+    }, 
+    {
+      "text": "        movl    -20(%rsp), %eax", 
+      "source": 3
+    }, 
+    {
+      "text": "        cmpl    -12(%rsp), %eax", 
+      "source": 3
+    }, 
+    {
+      "text": "        jge     .LBB0_4", 
+      "source": 3
+    }, 
+    {
+      "text": "        movslq  -20(%rsp), %rax", 
+      "source": 4
+    }, 
+    {
+      "text": "        movq    -8(%rsp), %rcx", 
+      "source": 4
+    }, 
+    {
+      "text": "        movl    (%rcx,%rax,4), %edx", 
+      "source": 4
+    }, 
+    {
+      "text": "        movl    -16(%rsp), %esi", 
+      "source": 4
+    }, 
+    {
+      "text": "        addl    %edx, %esi", 
+      "source": 4
+    }, 
+    {
+      "text": "        movl    %esi, -16(%rsp)", 
+      "source": 4
+    }, 
+    {
+      "text": "        movl    -20(%rsp), %eax", 
+      "source": 3
+    }, 
+    {
+      "text": "        addl    $1, %eax", 
+      "source": 3
+    }, 
+    {
+      "text": "        movl    %eax, -20(%rsp)", 
+      "source": 3
+    }, 
+    {
+      "text": "        jmp     .LBB0_1", 
+      "source": 3
+    }, 
+    {
+      "text": ".LBB0_4:", 
+      "source": null
+    }, 
+    {
+      "text": "        movl    -16(%rsp), %eax", 
+      "source": 6
+    }, 
+    {
+      "text": "        ret", 
+      "source": 6
+    }, 
+    {
+      "text": "", 
+      "source": null
+    }, 
+    {
+      "text": "", 
+      "source": null
+    }, 
+    {
+      "text": "", 
+      "source": null
+    }
+  ], 
+  "stderr": [], 
+  "stdout": []
+}

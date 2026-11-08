@@ -1,0 +1,71 @@
+compilers:
+  kotlin:
+    type: ziparchive
+    dir: kotlin-jvm-{{name}}
+    folder: kotlinc
+    depends:
+      - compilers/java 15.0.2
+    check_env:
+      - JAVA_HOME=%DEP0%
+    check_exe: bin/kotlinc-jvm -version
+    url: https://github.com/JetBrains/kotlin/releases/download/v{{name}}/kotlin-compiler-{{name}}.zip
+    targets: &kotlin_versions
+      - 1.4.0
+      - 1.4.10
+      - 1.4.20
+      - 1.4.21
+      - 1.4.30
+      - 1.4.31
+      - 1.4.32
+      - 1.5.0
+      - 1.5.10
+      - 1.5.20
+      - 1.5.21
+      - 1.5.30
+      - 1.5.31
+      - 1.6.0
+      - 1.6.10
+      - 1.6.20
+      - 1.7.0
+      - 1.8.0
+      - 1.8.10
+      - 1.8.20
+      - 1.9.0
+      - 1.9.10
+      - 1.9.20
+      - 2.0.0
+      - 2.0.10
+      - 2.0.20
+      - 2.0.21
+      - 2.1.0
+      - 2.1.10
+      - 2.1.20
+      - 2.1.21
+      - 2.2.0
+      - 2.2.10
+      - 2.2.20
+      - 2.2.21
+      - 2.3.0
+      - 2.3.10
+      - 2.3.20
+      - 2.3.21
+      - 2.4.0
+      - 2.4.10
+      - 2.4.20
+      - 2.4.21
+
+tools:
+  kotlin-maven:
+    type: script
+    dir: kotlin-jvm-{{name}}-maven
+    depends:
+      - tools/maven 3.9.16
+      - compilers/kotlin {{name}}
+      - compilers/java 21.0.2
+      - compilers/java 15.0.2  # Kotlin 1.4.20 to 1.4.32 only build under a JDK of their own era
+    fetch:
+      - '{{resource_dir}}/maven/prime-kotlin.sh prime-kotlin.sh'
+    script: |
+      bash prime-kotlin.sh "{{name}}" "kotlin-jvm-{{name}}-maven" "%DEP0%" "%DEP1%" "%DEP2%" "%DEP3%"
+    check_file: .ce-supplied-by-installation
+    targets: *kotlin_versions

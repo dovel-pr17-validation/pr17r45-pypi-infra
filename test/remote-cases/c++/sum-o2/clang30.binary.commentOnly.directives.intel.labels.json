@@ -1,0 +1,222 @@
+{
+  "okToCache": true, 
+  "code": 0, 
+  "asm": [
+    {
+      "text": ".plt.got:", 
+      "source": null
+    }, 
+    {
+      "text": " jmp    QWORD PTR [rip+0x20051a]        # 600970 <_DYNAMIC+0x200>", 
+      "opcodes": [
+        "ff", 
+        "25", 
+        "1a", 
+        "05", 
+        "20", 
+        "00"
+      ], 
+      "source": null, 
+      "links": [
+        {
+          "to": 6293872, 
+          "length": 6, 
+          "offset": 42
+        }
+      ], 
+      "address": 4195408
+    }, 
+    {
+      "text": " xchg   ax,ax", 
+      "opcodes": [
+        "66", 
+        "90"
+      ], 
+      "source": null, 
+      "links": null, 
+      "address": 4195414
+    }, 
+    {
+      "text": "testFunction(int*, int):", 
+      "source": null
+    }, 
+    {
+      "text": " xor    eax,eax", 
+      "opcodes": [
+        "31", 
+        "c0"
+      ], 
+      "source": 1, 
+      "links": null, 
+      "address": 4195680
+    }, 
+    {
+      "text": " test   esi,esi", 
+      "opcodes": [
+        "85", 
+        "f6"
+      ], 
+      "source": 1, 
+      "links": null, 
+      "address": 4195682
+    }, 
+    {
+      "text": " jle    40057a <testFunction(int*, int)+0x1a>", 
+      "opcodes": [
+        "7e", 
+        "14"
+      ], 
+      "source": 1, 
+      "links": [
+        {
+          "to": 4195706, 
+          "length": 6, 
+          "offset": 8
+        }
+      ], 
+      "address": 4195684
+    }, 
+    {
+      "text": " nop    WORD PTR cs:[rax+rax*1+0x0]", 
+      "opcodes": [
+        "66", 
+        "2e", 
+        "0f", 
+        "1f", 
+        "84", 
+        "00", 
+        "00", 
+        "00", 
+        "00", 
+        "00"
+      ], 
+      "source": 1, 
+      "links": null, 
+      "address": 4195686
+    }, 
+    {
+      "text": " add    eax,DWORD PTR [rdi]", 
+      "opcodes": [
+        "03", 
+        "07"
+      ], 
+      "source": 4, 
+      "links": null, 
+      "address": 4195696
+    }, 
+    {
+      "text": " add    rdi,0x4", 
+      "opcodes": [
+        "48", 
+        "83", 
+        "c7", 
+        "04"
+      ], 
+      "source": 3, 
+      "links": null, 
+      "address": 4195698
+    }, 
+    {
+      "text": " dec    esi", 
+      "opcodes": [
+        "ff", 
+        "ce"
+      ], 
+      "source": 3, 
+      "links": null, 
+      "address": 4195702
+    }, 
+    {
+      "text": " jne    400570 <testFunction(int*, int)+0x10>", 
+      "opcodes": [
+        "75", 
+        "f6"
+      ], 
+      "source": 3, 
+      "links": [
+        {
+          "to": 4195696, 
+          "length": 6, 
+          "offset": 8
+        }
+      ], 
+      "address": 4195704
+    }, 
+    {
+      "text": " ret    ", 
+      "opcodes": [
+        "c3"
+      ], 
+      "source": 6, 
+      "links": null, 
+      "address": 4195706
+    }, 
+    {
+      "text": " nop    DWORD PTR [rax+rax*1+0x0]", 
+      "opcodes": [
+        "0f", 
+        "1f", 
+        "44", 
+        "00", 
+        "00"
+      ], 
+      "source": 6, 
+      "links": null, 
+      "address": 4195707
+    }, 
+    {
+      "text": "main:", 
+      "source": null
+    }, 
+    {
+      "text": " xor    eax,eax", 
+      "opcodes": [
+        "31", 
+        "c0"
+      ], 
+      "source": 9, 
+      "links": null, 
+      "address": 4195712
+    }, 
+    {
+      "text": " ret    ", 
+      "opcodes": [
+        "c3"
+      ], 
+      "source": 9, 
+      "links": null, 
+      "address": 4195714
+    }, 
+    {
+      "text": " nop    WORD PTR cs:[rax+rax*1+0x0]", 
+      "opcodes": [
+        "66", 
+        "2e", 
+        "0f", 
+        "1f", 
+        "84", 
+        "00", 
+        "00", 
+        "00", 
+        "00", 
+        "00"
+      ], 
+      "source": 9, 
+      "links": null, 
+      "address": 4195715
+    }, 
+    {
+      "text": " nop    DWORD PTR [rax]", 
+      "opcodes": [
+        "0f", 
+        "1f", 
+        "00"
+      ], 
+      "source": 9, 
+      "links": null, 
+      "address": 4195725
+    }
+  ], 
+  "stderr": [], 
+  "stdout": []
+}

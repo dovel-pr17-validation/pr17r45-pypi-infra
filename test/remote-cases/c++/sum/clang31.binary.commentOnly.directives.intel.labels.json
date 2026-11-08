@@ -1,0 +1,366 @@
+{
+  "okToCache": true, 
+  "code": 0, 
+  "asm": [
+    {
+      "text": ".plt.got:", 
+      "source": null
+    }, 
+    {
+      "text": " jmp    QWORD PTR [rip+0x20055a]        # 6009b0 <_DYNAMIC+0x200>", 
+      "opcodes": [
+        "ff", 
+        "25", 
+        "5a", 
+        "05", 
+        "20", 
+        "00"
+      ], 
+      "source": null, 
+      "links": [
+        {
+          "to": 6293936, 
+          "length": 6, 
+          "offset": 42
+        }
+      ], 
+      "address": 4195408
+    }, 
+    {
+      "text": " xchg   ax,ax", 
+      "opcodes": [
+        "66", 
+        "90"
+      ], 
+      "source": null, 
+      "links": null, 
+      "address": 4195414
+    }, 
+    {
+      "text": "testFunction(int*, int):", 
+      "source": null
+    }, 
+    {
+      "text": " mov    QWORD PTR [rsp-0x8],rdi", 
+      "opcodes": [
+        "48", 
+        "89", 
+        "7c", 
+        "24", 
+        "f8"
+      ], 
+      "source": 1, 
+      "links": null, 
+      "address": 4195680
+    }, 
+    {
+      "text": " mov    DWORD PTR [rsp-0xc],esi", 
+      "opcodes": [
+        "89", 
+        "74", 
+        "24", 
+        "f4"
+      ], 
+      "source": 1, 
+      "links": null, 
+      "address": 4195685
+    }, 
+    {
+      "text": " mov    DWORD PTR [rsp-0x10],0x0", 
+      "opcodes": [
+        "c7", 
+        "44", 
+        "24", 
+        "f0", 
+        "00", 
+        "00", 
+        "00", 
+        "00"
+      ], 
+      "source": 2, 
+      "links": null, 
+      "address": 4195689
+    }, 
+    {
+      "text": " mov    DWORD PTR [rsp-0x14],0x0", 
+      "opcodes": [
+        "c7", 
+        "44", 
+        "24", 
+        "ec", 
+        "00", 
+        "00", 
+        "00", 
+        "00"
+      ], 
+      "source": 3, 
+      "links": null, 
+      "address": 4195697
+    }, 
+    {
+      "text": " mov    eax,DWORD PTR [rsp-0x14]", 
+      "opcodes": [
+        "8b", 
+        "44", 
+        "24", 
+        "ec"
+      ], 
+      "source": 3, 
+      "links": null, 
+      "address": 4195705
+    }, 
+    {
+      "text": " cmp    eax,DWORD PTR [rsp-0xc]", 
+      "opcodes": [
+        "3b", 
+        "44", 
+        "24", 
+        "f4"
+      ], 
+      "source": 3, 
+      "links": null, 
+      "address": 4195709
+    }, 
+    {
+      "text": " jge    4005b0 <testFunction(int*, int)+0x50>", 
+      "opcodes": [
+        "0f", 
+        "8d", 
+        "29", 
+        "00", 
+        "00", 
+        "00"
+      ], 
+      "source": 3, 
+      "links": [
+        {
+          "to": 4195760, 
+          "length": 6, 
+          "offset": 8
+        }
+      ], 
+      "address": 4195713
+    }, 
+    {
+      "text": " movsxd rax,DWORD PTR [rsp-0x14]", 
+      "opcodes": [
+        "48", 
+        "63", 
+        "44", 
+        "24", 
+        "ec"
+      ], 
+      "source": 4, 
+      "links": null, 
+      "address": 4195719
+    }, 
+    {
+      "text": " mov    rcx,QWORD PTR [rsp-0x8]", 
+      "opcodes": [
+        "48", 
+        "8b", 
+        "4c", 
+        "24", 
+        "f8"
+      ], 
+      "source": 4, 
+      "links": null, 
+      "address": 4195724
+    }, 
+    {
+      "text": " mov    edx,DWORD PTR [rcx+rax*4]", 
+      "opcodes": [
+        "8b", 
+        "14", 
+        "81"
+      ], 
+      "source": 4, 
+      "links": null, 
+      "address": 4195729
+    }, 
+    {
+      "text": " mov    esi,DWORD PTR [rsp-0x10]", 
+      "opcodes": [
+        "8b", 
+        "74", 
+        "24", 
+        "f0"
+      ], 
+      "source": 4, 
+      "links": null, 
+      "address": 4195732
+    }, 
+    {
+      "text": " add    esi,edx", 
+      "opcodes": [
+        "01", 
+        "d6"
+      ], 
+      "source": 4, 
+      "links": null, 
+      "address": 4195736
+    }, 
+    {
+      "text": " mov    DWORD PTR [rsp-0x10],esi", 
+      "opcodes": [
+        "89", 
+        "74", 
+        "24", 
+        "f0"
+      ], 
+      "source": 4, 
+      "links": null, 
+      "address": 4195738
+    }, 
+    {
+      "text": " mov    eax,DWORD PTR [rsp-0x14]", 
+      "opcodes": [
+        "8b", 
+        "44", 
+        "24", 
+        "ec"
+      ], 
+      "source": 3, 
+      "links": null, 
+      "address": 4195742
+    }, 
+    {
+      "text": " add    eax,0x1", 
+      "opcodes": [
+        "05", 
+        "01", 
+        "00", 
+        "00", 
+        "00"
+      ], 
+      "source": 3, 
+      "links": null, 
+      "address": 4195746
+    }, 
+    {
+      "text": " mov    DWORD PTR [rsp-0x14],eax", 
+      "opcodes": [
+        "89", 
+        "44", 
+        "24", 
+        "ec"
+      ], 
+      "source": 3, 
+      "links": null, 
+      "address": 4195751
+    }, 
+    {
+      "text": " jmp    400579 <testFunction(int*, int)+0x19>", 
+      "opcodes": [
+        "e9", 
+        "c9", 
+        "ff", 
+        "ff", 
+        "ff"
+      ], 
+      "source": 3, 
+      "links": [
+        {
+          "to": 4195705, 
+          "length": 6, 
+          "offset": 8
+        }
+      ], 
+      "address": 4195755
+    }, 
+    {
+      "text": " mov    eax,DWORD PTR [rsp-0x10]", 
+      "opcodes": [
+        "8b", 
+        "44", 
+        "24", 
+        "f0"
+      ], 
+      "source": 6, 
+      "links": null, 
+      "address": 4195760
+    }, 
+    {
+      "text": " ret    ", 
+      "opcodes": [
+        "c3"
+      ], 
+      "source": 6, 
+      "links": null, 
+      "address": 4195764
+    }, 
+    {
+      "text": " data16 nop WORD PTR cs:[rax+rax*1+0x0]", 
+      "opcodes": [
+        "66", 
+        "66", 
+        "2e", 
+        "0f", 
+        "1f", 
+        "84", 
+        "00", 
+        "00", 
+        "00", 
+        "00", 
+        "00"
+      ], 
+      "source": 6, 
+      "links": null, 
+      "address": 4195765
+    }, 
+    {
+      "text": "main:", 
+      "source": null
+    }, 
+    {
+      "text": " mov    eax,0x0", 
+      "opcodes": [
+        "b8", 
+        "00", 
+        "00", 
+        "00", 
+        "00"
+      ], 
+      "source": 9, 
+      "links": null, 
+      "address": 4195776
+    }, 
+    {
+      "text": " mov    DWORD PTR [rsp-0x4],0x0", 
+      "opcodes": [
+        "c7", 
+        "44", 
+        "24", 
+        "fc", 
+        "00", 
+        "00", 
+        "00", 
+        "00"
+      ], 
+      "source": 9, 
+      "links": null, 
+      "address": 4195781
+    }, 
+    {
+      "text": " ret    ", 
+      "opcodes": [
+        "c3"
+      ], 
+      "source": 9, 
+      "links": null, 
+      "address": 4195789
+    }, 
+    {
+      "text": " xchg   ax,ax", 
+      "opcodes": [
+        "66", 
+        "90"
+      ], 
+      "source": 9, 
+      "links": null, 
+      "address": 4195790
+    }
+  ], 
+  "stderr": [], 
+  "stdout": []
+}

@@ -1,0 +1,54 @@
+compilers:
+  ispc:
+    type: tarballs
+    compression: gz
+    suffix: ''
+    url: https://github.com/ispc/ispc/releases/download/v{{name}}/ispc-v{{name}}{{suffix}}-linux.tar.gz
+    dir: ispc-{{name}}
+    untar_dir: ispc-v{{name}}-linux
+    check_exe: bin/ispc --version
+    targets:
+      - 1.32.0
+      - 1.31.0
+      - 1.30.0
+      - 1.29.1
+      - 1.29.0
+      - 1.28.2
+      - 1.28.1
+      - 1.28.0
+      - 1.27.0
+      - 1.26.0
+      - 1.25.3
+      - 1.25.0
+      - 1.24.0
+      - 1.23.0
+      - 1.22.0
+      - 1.21.0
+      - 1.20.0
+      - 1.19.0
+      - 1.18.0
+      - 1.17.0
+      - 1.16.1
+      - 1.16.0
+      - 1.15.0
+      - 1.14.1
+      - 1.14.0
+      - 1.13.0
+    older:
+      # Older ones seem to live at vBLAHb-linux.tar.gz
+      suffix: b
+      targets:
+        - 1.12.0
+        - 1.11.0
+        - 1.10.0
+      oldest:
+        check_exe: ispc --version
+        targets:
+          - 1.9.2
+          - 1.9.1
+    nightly:
+      if: nightly
+      compiler_name: ispc-{{name}}
+      type: nightly
+      targets:
+        - trunk

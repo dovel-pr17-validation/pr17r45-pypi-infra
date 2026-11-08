@@ -1,0 +1,220 @@
+.NOTPARALLEL:
+
+# Use system uv if available, otherwise install locally
+UV_SYSTEM:=$(shell command -v uv 2>/dev/null)
+UV_BIN:=$(if $(UV_SYSTEM),$(UV_SYSTEM),$(CURDIR)/.uv/uv)
+UV_VENV:=$(CURDIR)/.venv
+UV_DEPS:=$(UV_VENV)/.deps
+export PYTHONPATH=$(CURDIR)/bin
+
+.PHONY: help
+help: # with thanks to Ben Rady
+	@grep -E '^[0-9a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
+
+PACKER ?= packer
+
+$(CURDIR)/.uv/uv:
+	@echo "Installing uv..."
+	@mkdir -p $(dir $@)
+	@curl -LsSf https://astral.sh/uv/install.sh | UV_NO_MODIFY_PATH=1 UV_INSTALL_DIR=$(CURDIR)/.uv sh -s
+
+# Only require local uv installation if system uv is not available
+# When UV_SYSTEM is set, UV_BIN points to the system uv, so no dependency needed
+# When UV_SYSTEM is empty, UV_BIN points to .uv/uv, but we don't want a circular dependency
+ifneq ($(UV_SYSTEM),)
+$(UV_BIN):
+	@true
+endif
+
+config.json: make_json.py | $(UV_DEPS)
+	$(UV_BIN) run python make_json.py
+
+.PHONY: packer
+packer: config.json ## Builds the base image for compiler explorer nodes
+	$(PACKER) build -timestamp-ui -var-file=config.json $(EXTRA_ARGS) packer/node.pkr.hcl
+
+.PHONY: packer-local
+packer-local: config.json ## Builds a local docker version of the compiler explorer node image
+	$(PACKER) build -timestamp-ui -var-file=config.json $(EXTRA_ARGS) packer/local.pkr.hcl
+
+.PHONY: packer-admin
+packer-admin: config.json  ## Builds the base image for the admin server
+	$(PACKER) build -timestamp-ui -var-file=config.json $(EXTRA_ARGS) packer/admin.pkr.hcl
+
+.PHONY: packer-conan
+packer-conan: config.json  ## Builds the base image for the CE conan-server
+	$(PACKER) build -timestamp-ui -var-file=config.json $(EXTRA_ARGS) packer/conan.pkr.hcl
+
+.PHONY: packer-gpu-node
+packer-gpu-node: config.json  ## Builds the base image for the CE gpu nodes
+	$(PACKER) build -timestamp-ui -var-file=config.json $(EXTRA_ARGS) packer/gpu-node.pkr.hcl
+
+.PHONY: packer-aarch64-node
+packer-aarch64-node: config.json  ## Builds the base image for the CE aarch64 nodes
+	$(PACKER) build -timestamp-ui -var-file=config.json $(EXTRA_ARGS) packer/aarch64-node.pkr.hcl
+
+.PHONY: packer-smb
+packer-smb: config.json  ## Builds the base image for the CE smb-server
+	$(PACKER) build -timestamp-ui -var-file=config.json $(EXTRA_ARGS) packer/smb.pkr.hcl
+
+.PHONY: packer-smb-local
+packer-smb-local: config.json  ## Builds the base image for the CE smb-server for local testing
+	$(PACKER) build -timestamp-ui -var-file=config.json $(EXTRA_ARGS) packer/smb-local.pkr.hcl
+
+.PHONY: packer-win
+packer-win: config.json  ## Builds the base image for the CE windows
+	$(PACKER) build -timestamp-ui -var-file=config.json $(EXTRA_ARGS) packer/win.pkr.hcl
+
+.PHONY: packer-builder
+packer-builder: config.json  ## Builds the base image for the CE builder
+	$(PACKER) build -timestamp-ui -var-file=config.json $(EXTRA_ARGS) packer/builder.pkr.hcl
+
+.PHONY: packer-ce-router
+packer-ce-router: config.json  ## Builds the base image for the CE router
+	$(PACKER) build -timestamp-ui -var-file=config.json $(EXTRA_ARGS) packer/ce-router.pkr.hcl
+
+.PHONY: clean
+clean:  ## Cleans up everything
+	rm -rf $(CURDIR)/.uv $(UV_VENV) uv.lock
+
+.PHONY: update-admin
+update-admin:  ## Updates the admin website
+	aws s3 sync admin/ s3://compiler-explorer/admin/ --cache-control max-age=5 --metadata-directive REPLACE
+
+.PHONY: ce
+ce: $(UV_BIN) $(UV_DEPS)  ## Installs and configures the python environment needed for the various admin commands
+
+$(UV_DEPS): $(UV_BIN) pyproject.toml
+	$(UV_BIN) sync --no-install-project
+	@touch $@
+
+PY_SOURCE_ROOTS:=bin/lib bin/test lambda
+
+.PHONY: test
+test: ce  ## Runs all tests (Python only)
+	$(UV_BIN) run pytest $(PY_SOURCE_ROOTS)
+
+.PHONY: static-checks
+static-checks: ce  ## Runs all the static tests
+	env SKIP=test $(UV_BIN) run pre-commit run --all-files
+
+.PHONY: mugs
+mugs: ce  ## Generate all ABI reference mug designs (SVG + PNG)
+	$(UV_BIN) run mugs/make_x86_64_systemv_mug.py mugs/x86_64_systemv_abi_mug.svg
+	$(UV_BIN) run mugs/make_x86_64_msvc_mug.py mugs/x86_64_msvc_abi_mug.svg
+	$(UV_BIN) run mugs/make_x86_64_go_mug.py mugs/x86_64_go_abi_mug.svg
+	$(UV_BIN) run mugs/make_arm64_mug.py mugs/arm64_abi_mug.svg
+	$(UV_BIN) run mugs/make_arm32_eabi_mug.py mugs/arm32_eabi_mug.svg
+	$(UV_BIN) run mugs/make_arm64_go_mug.py mugs/arm64_go_abi_mug.svg
+	$(UV_BIN) run mugs/make_riscv_mug.py mugs/riscv_abi_mug.svg
+	$(UV_BIN) run mugs/make_riscv_go_mug.py mugs/riscv_go_abi_mug.svg
+
+LAMBDA_PACKAGE:=$(CURDIR)/.dist/lambda-package.zip
+LAMBDA_PACKAGE_SHA:=$(CURDIR)/.dist/lambda-package.zip.sha256
+$(LAMBDA_PACKAGE) $(LAMBDA_PACKAGE_SHA): $(wildcard lambda/*.py) lambda/pyproject.toml lambda/uv.lock Makefile scripts/build_lambda_deterministic.py
+	$(UV_BIN) run python scripts/build_lambda_deterministic.py $(CURDIR)/lambda $(LAMBDA_PACKAGE)
+
+.PHONY: lambda-package  ## builds lambda
+lambda-package: $(LAMBDA_PACKAGE) $(LAMBDA_PACKAGE_SHA)
+
+.PHONY: check-lambda-changed
+check-lambda-changed: lambda-package
+	@mkdir -p $(dir $(LAMBDA_PACKAGE))
+	@echo "Checking if lambda package has changed..."
+	@aws s3 cp s3://compiler-explorer/lambdas/lambda-package.zip.sha256 $(LAMBDA_PACKAGE_SHA).remote 2>/dev/null || (echo "Remote lambda SHA doesn't exist yet" && touch $(LAMBDA_PACKAGE_SHA).remote)
+	@if [ ! -f $(LAMBDA_PACKAGE_SHA).remote ] || ! cmp -s $(LAMBDA_PACKAGE_SHA) $(LAMBDA_PACKAGE_SHA).remote; then \
+		echo "Lambda package has changed"; \
+		echo "LAMBDA_CHANGED=1" > $(LAMBDA_PACKAGE_SHA).status; \
+	else \
+		echo "Lambda package has not changed"; \
+		echo "LAMBDA_CHANGED=0" > $(LAMBDA_PACKAGE_SHA).status; \
+	fi
+
+
+.PHONY: upload-lambda
+upload-lambda: check-lambda-changed
+	@. $(LAMBDA_PACKAGE_SHA).status && \
+	if [ "$$LAMBDA_CHANGED" = "1" ]; then \
+		echo "Uploading new lambda package to S3..."; \
+		aws s3 cp $(LAMBDA_PACKAGE) s3://compiler-explorer/lambdas/lambda-package.zip; \
+		aws s3 cp --content-type text/sha256 $(LAMBDA_PACKAGE_SHA) s3://compiler-explorer/lambdas/lambda-package.zip.sha256; \
+		echo "Lambda package uploaded successfully!"; \
+	else \
+		echo "Lambda package hasn't changed. No upload needed."; \
+	fi
+
+EVENTS_LAMBDA_PACKAGE_DIR:=$(CURDIR)/.dist/events-lambda-package
+EVENTS_LAMBDA_PACKAGE:=$(CURDIR)/.dist/events-lambda-package.zip
+EVENTS_LAMBDA_PACKAGE_SHA:=$(CURDIR)/.dist/events-lambda-package.zip.sha256
+EVENTS_LAMBDA_DIR:=$(CURDIR)/events-lambda
+$(EVENTS_LAMBDA_PACKAGE) $(EVENTS_LAMBDA_PACKAGE_SHA): $(wildcard events-lambda/*.js) events-lambda/package.json Makefile scripts/build_nodejs_lambda_deterministic.py
+	$(UV_BIN) run python scripts/build_nodejs_lambda_deterministic.py $(EVENTS_LAMBDA_DIR) $(EVENTS_LAMBDA_PACKAGE)
+
+.PHONY: events-lambda-package  ## Builds events lambda
+events-lambda-package: $(EVENTS_LAMBDA_PACKAGE) $(EVENTS_LAMBDA_PACKAGE_SHA)
+
+.PHONY: lint-events-lambda  ## runs events lambda linter
+lint-events-lambda:
+	cd events-lambda && npm install && npm run lint
+
+.PHONY: check-events-lambda-changed
+check-events-lambda-changed: events-lambda-package
+	@mkdir -p $(dir $(EVENTS_LAMBDA_PACKAGE))
+	@echo "Checking if events lambda package has changed..."
+	@aws s3 cp s3://compiler-explorer/lambdas/events-lambda-package.zip.sha256 $(EVENTS_LAMBDA_PACKAGE_SHA).remote 2>/dev/null || (echo "Remote events lambda SHA doesn't exist yet" && touch $(EVENTS_LAMBDA_PACKAGE_SHA).remote)
+	@if [ ! -f $(EVENTS_LAMBDA_PACKAGE_SHA).remote ] || ! cmp -s $(EVENTS_LAMBDA_PACKAGE_SHA) $(EVENTS_LAMBDA_PACKAGE_SHA).remote; then \
+		echo "Events lambda package has changed"; \
+		echo "EVENTS_LAMBDA_CHANGED=1" > $(EVENTS_LAMBDA_PACKAGE_SHA).status; \
+	else \
+		echo "Events lambda package has not changed"; \
+		echo "EVENTS_LAMBDA_CHANGED=0" > $(EVENTS_LAMBDA_PACKAGE_SHA).status; \
+	fi
+
+.PHONY: upload-events-lambda
+upload-events-lambda: check-events-lambda-changed  ## Uploads events-lambda to S3
+	@. $(EVENTS_LAMBDA_PACKAGE_SHA).status && \
+	if [ "$$EVENTS_LAMBDA_CHANGED" = "1" ]; then \
+		echo "Uploading new events lambda package to S3..."; \
+		aws s3 cp $(EVENTS_LAMBDA_PACKAGE) s3://compiler-explorer/lambdas/events-lambda-package.zip; \
+		aws s3 cp --content-type text/sha256 $(EVENTS_LAMBDA_PACKAGE_SHA) s3://compiler-explorer/lambdas/events-lambda-package.zip.sha256; \
+		echo "Events lambda package uploaded successfully!"; \
+	else \
+		echo "Events lambda package hasn't changed. No upload needed."; \
+	fi
+
+.PHONY: terraform-apply
+terraform-apply:  upload-lambda upload-events-lambda ## Applies terraform
+	terraform -chdir=terraform apply
+
+.PHONY: terraform-plan
+terraform-plan:  upload-lambda upload-events-lambda ## Plans terraform changes
+	terraform -chdir=terraform plan
+
+.PHONY: grafana-init
+grafana-init:  ## Initialises the Grafana Cloud terraform root (terraform/grafana)
+	terraform -chdir=terraform/grafana init
+
+.PHONY: grafana-plan
+grafana-plan:  ## Plans Grafana Cloud changes (alert rules etc; see docs/grafana_terraform.md)
+	terraform -chdir=terraform/grafana plan
+
+.PHONY: grafana-apply
+grafana-apply:  ## Applies Grafana Cloud changes
+	terraform -chdir=terraform/grafana apply
+
+.PHONY: pre-commit
+pre-commit: ce  ## Runs all pre-commit hooks
+	$(UV_BIN) run pre-commit run --all-files
+
+.PHONY: install-pre-commit
+install-pre-commit: ce  ## Install pre-commit hooks
+	$(UV_BIN) run pre-commit install
+
+FISH_COMPLETIONS_DIR ?= $(HOME)/.config/fish/completions
+
+.PHONY: install-completions
+install-completions: ce  ## Install fish shell completions for ce and ce_install
+	@mkdir -p $(FISH_COMPLETIONS_DIR)
+	@_CE_COMPLETE=fish_source $(CURDIR)/bin/ce > $(FISH_COMPLETIONS_DIR)/ce.fish
+	@_CE_INSTALL_COMPLETE=fish_source $(CURDIR)/bin/ce_install > $(FISH_COMPLETIONS_DIR)/ce_install.fish
+	@echo "installed fish completions to $(FISH_COMPLETIONS_DIR)"
